@@ -28,5 +28,10 @@ var SCHEMA = {
 var APP = {
   NAME: 'ProjectScope',
   VERSION: '1.0.0',
-  CACHE_EXPIRATION: 21600
+  CACHE_EXPIRATION: 21600,
+  MAX_TEXT: 2000,
+  MAX_SHORT_TEXT: 200
 };
+
+/** Stored in place of an answer when the client taps "Not sure yet". Shared with index.html via getProjectState. */
+var NOT_SURE = '__not_sure__';

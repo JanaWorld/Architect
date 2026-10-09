@@ -4,7 +4,7 @@
  * Rules applied when writing questions (Product rule #1):
  *  - Ask only what the client can answer (business/domain knowledge), never technology choices.
  *  - Every question declares which facts it `resolves` and its `technicalImpacts`, so the engine
- *    can compute Question Value = Impact × Uncertainty × Necessity and skip low-value questions.
+ *    can compute Question Value = Impact × Necessity and skip low-value questions.
  *
  * Fields:
  *  id, category, text, description, helpText, type, options, required, priority (P0–P3), importance,
@@ -21,6 +21,8 @@
  */
 var QuestionBank = (function () {
   var IMPACT = { P0: 1.0, P1: 0.8, P2: 0.55, P3: 0.35 };
+  var MAX_TEXT = 2000;
+  var MAX_SHORT = 200;
 
   function opts_(list) {
     return (list || []).map(function (o) { return { value: o[0], label: o[1], hint: o[2] || '' }; });
@@ -34,7 +36,7 @@ var QuestionBank = (function () {
       description: d.description || '',
       helpText: d.helpText || '',
       type: d.type || 'single',
-      options: opts_(d.options),
+      options: opts_(d.options || (d.type === 'yesno' ? [['yes', 'Yes'], ['no', 'No']] : [])),
       required: d.required !== undefined ? d.required : d.priority === 'P0',
       priority: d.priority || 'P2',
       importance: d.importance !== undefined ? d.importance : IMPACT[d.priority || 'P2'],
@@ -64,13 +66,13 @@ var QuestionBank = (function () {
       helpText: 'Describe it the way you would explain it to a friend. No technical words needed.',
       placeholder: 'e.g. A website where patients can book appointments with our doctors and get reminders.',
       resolves: ['text.description'], impacts: ['classification', 'scope'], tags: ['business'],
-      validation: { minLength: 10, maxLength: APP.MAX_TEXT } }),
+      validation: { minLength: 10, maxLength: MAX_TEXT } }),
     Q_({ id: 'q_problem', stage: 'core', order: 2, priority: 'P0', category: 'Vision', type: 'long', notSure: true,
       text: 'What problem should it solve, or what is not working well today?',
       helpText: 'Think about what is slow, manual, costly or frustrating right now.',
       placeholder: 'e.g. Our receptionist spends hours on the phone and patients often miss appointments.',
       resolves: ['text.problem'], impacts: ['scope', 'requirements'], tags: ['business'],
-      validation: { maxLength: APP.MAX_TEXT } }),
+      validation: { maxLength: MAX_TEXT } }),
     Q_({ id: 'q_users', stage: 'core', order: 3, priority: 'P0', category: 'People', type: 'multi', other: true,
       text: 'Who will use it?', helpText: 'Choose everyone who will interact with it.',
       options: [
@@ -615,8 +617,64 @@ var QuestionBank = (function () {
       placeholder: 'e.g. 50% of appointments booked online; fewer phone calls.',
       need: { base: 0.4 },
       resolves: ['success'], impacts: ['analytics', 'acceptance'], tags: ['business'],
-      validation: { maxLength: APP.MAX_SHORT_TEXT } })
+      validation: { maxLength: MAX_SHORT } })
   ];
+
+  /** Finds the first question that resolves into the given fact name. */
+  function questionForFact_(factName) {
+    for (var i = 0; i < QUESTIONS.length; i++) {
+      if (QUESTIONS[i].resolves.indexOf(factName) !== -1) return QUESTIONS[i];
+    }
+    return null;
+  }
+
+  function labelOne_(q, value) {
+    if (value === NOT_SURE) return 'Not sure yet';
+    if (q) {
+      for (var i = 0; i < q.options.length; i++) {
+        if (q.options[i].value === value) return q.options[i].label;
+      }
+    }
+    return String(value);
+  }
+
+  /** Human-readable label for a stored fact value, e.g. ('budget', 'b2') -> '$8,000 to $25,000 ...'. */
+  function labelFor_(factName, value) {
+    var q = questionForFact_(factName);
+    if (Array.isArray(value)) {
+      return value.map(function (v) { return labelOne_(q, v); }).join(', ');
+    }
+    return labelOne_(q, value);
+  }
+
+  /** Returns an error message for an invalid answer, or null if it is acceptable. */
+  function validateAnswer_(q, value) {
+    if (value === NOT_SURE) {
+      return q.allowNotSure ? null : 'This question needs an answer.';
+    }
+
+    if (q.type === 'multi') {
+      if (!Array.isArray(value) || value.length === 0) return 'Choose at least one option.';
+      for (var i = 0; i < value.length; i++) {
+        var known = q.options.some(function (o) { return o.value === value[i]; });
+        if (!known && !q.allowOther) return 'Unknown option.';
+      }
+      return null;
+    }
+
+    if (q.type === 'single' || q.type === 'yesno') {
+      if (typeof value !== 'string' || !value) return 'Choose an option.';
+      var isOption = q.options.some(function (o) { return o.value === value; });
+      return (isOption || q.allowOther) ? null : 'Unknown option.';
+    }
+
+    // Free-text questions ('long' and 'short').
+    if (typeof value !== 'string' || !value.trim()) return 'Please write an answer.';
+    var v = q.validation || {};
+    if (v.minLength && value.trim().length < v.minLength) return 'Please add a little more detail.';
+    if (v.maxLength && value.length > v.maxLength) return 'That answer is too long.';
+    return null;
+  }
 
   var BY_ID = {};
   QUESTIONS.forEach(function (q) { BY_ID[q.id] = q; });
@@ -635,8 +693,13 @@ var QuestionBank = (function () {
   return {
     all: function () { return QUESTIONS; },
     get: function (id) { return BY_ID[id] || null; },
-    core: function () { return U.sortBy(QUESTIONS.filter(function (q) { return q.stage === 'core'; }), function (q) { return q.order; }); },
+    core: function () {
+      return QUESTIONS.filter(function (q) { return q.stage === 'core'; })
+        .sort(function (a, b) { return a.order - b.order; });
+    },
     fromCustom: fromCustom_,
+    labelFor: labelFor_,
+    validateAnswer: validateAnswer_,
     impactFor: function (p) { return IMPACT[p] || 0.5; },
     /** Client-safe projection (strips internal metadata). */
     toClient: function (q, developer) {

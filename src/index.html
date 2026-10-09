@@ -4,7 +4,6 @@
     <base target="_top">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* CSS Design Tokens / Basic Setup */
         :root {
             --bg-color: #f8fafc;
             --surface-color: #ffffff;
@@ -14,19 +13,20 @@
             --text-muted: #64748b;
             --border-color: #e2e8f0;
             --success-color: #10b981;
+            --error-color: #b91c1c;
             --radius: 8px;
             --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
         }
-        
+
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        
+
         body {
             background-color: var(--bg-color);
             color: var(--text-main);
             line-height: 1.5;
             padding: 2rem;
         }
-        
+
         .container {
             max-width: 1000px;
             margin: 0 auto;
@@ -34,11 +34,11 @@
             grid-template-columns: 2fr 1fr;
             gap: 2rem;
         }
-        
+
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
         }
-        
+
         .card {
             background: var(--surface-color);
             border-radius: var(--radius);
@@ -46,24 +46,25 @@
             padding: 2rem;
             margin-bottom: 1.5rem;
         }
-        
+
         h1, h2, h3 { color: var(--text-main); margin-bottom: 1rem; }
         h1 { font-size: 1.75rem; font-weight: 700; }
         h2 { font-size: 1.25rem; font-weight: 600; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; }
-        
+
         .question-card {
             border: 1px solid var(--border-color);
             border-radius: var(--radius);
             padding: 1.5rem;
             margin-bottom: 1rem;
-            transition: border-color 0.2s;
+            transition: border-color 0.2s, opacity 0.2s;
         }
         .question-card:focus-within { border-color: var(--primary-color); }
-        
+        .question-card.busy { opacity: 0.6; pointer-events: none; }
+
         .q-title { font-weight: 600; margin-bottom: 0.5rem; font-size: 1.1rem; }
-        .q-desc { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }
-        
-        .options { display: flex; flex-direction: column; gap: 0.5rem; }
+        .q-desc { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem; }
+
+        .options { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
         .option-label {
             display: flex; align-items: center; gap: 0.5rem;
             padding: 0.75rem; border: 1px solid var(--border-color);
@@ -71,13 +72,14 @@
             transition: background-color 0.2s;
         }
         .option-label:hover { background-color: var(--bg-color); }
-        
-        input[type="text"], input[type="number"], select, textarea {
+        .option-label input { margin: 0; }
+
+        input[type="text"], textarea {
             width: 100%; padding: 0.75rem;
             border: 1px solid var(--border-color); border-radius: var(--radius);
             font-size: 1rem;
         }
-        
+
         button {
             background: var(--primary-color); color: white;
             border: none; padding: 0.75rem 1.5rem; border-radius: var(--radius);
@@ -85,13 +87,24 @@
         }
         button:hover { background: var(--primary-hover); }
         button:disabled { background: var(--text-muted); cursor: not-allowed; }
-        
+        button.btn-secondary {
+            background: transparent; color: var(--primary-color);
+            border: 1px solid var(--border-color);
+        }
+        button.btn-secondary:hover { background: var(--bg-color); }
+
+        .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .card-error { display: none; color: var(--error-color); font-size: 0.9rem; margin-top: 0.75rem; }
+        .card-error.show { display: block; }
+        .fatal { color: var(--error-color); }
+
         .sidebar { font-size: 0.9rem; }
         .stat-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px dashed var(--border-color); }
         .stat-val { font-weight: 600; }
-        
+        .stack-row { font-size: 0.85rem; margin-top: 0.5rem; }
+
         .loading { text-align: center; padding: 2rem; color: var(--text-muted); font-style: italic; }
-        
+
         .tag {
             display: inline-block; padding: 0.25rem 0.5rem;
             background: var(--bg-color); border: 1px solid var(--border-color);
@@ -104,96 +117,182 @@
         <div class="loading">Loading ProjectScope...</div>
     </div>
 
-    <!-- UI Template -->
     <template id="app-template">
         <div class="container">
-            <!-- Main Content Area: Questions -->
             <div class="main-content">
                 <div class="card">
                     <h1>Project Discovery</h1>
                     <p style="color: var(--text-muted); margin-bottom: 2rem;">Answer the following questions to help us structure your project.</p>
-                    
                     <div id="questions-container"></div>
                 </div>
             </div>
-            
-            <!-- Sidebar Area: Real-time Analysis -->
+
             <div class="sidebar">
                 <div class="card">
                     <h2>Live Architecture</h2>
-                    <div id="analysis-content">
-                        <!-- Populated dynamically -->
-                    </div>
+                    <div id="analysis-content"></div>
                 </div>
             </div>
         </div>
     </template>
 
     <script>
-        // Frontend Application Logic
-        let state = {
-            projectId: localStorage.getItem('projectScopeId'),
-            data: null
-        };
+        var state = { projectId: readStoredId_(), data: null, busy: false };
+
+        function readStoredId_() {
+            try { return localStorage.getItem('projectScopeId'); } catch (e) { return null; }
+        }
+        function storeId_(id) {
+            // If storage is blocked (some sandboxed iframes), the id lives only for this page view.
+            try { localStorage.setItem('projectScopeId', id); } catch (e) {}
+        }
+        function clearStoredId_() {
+            try { localStorage.removeItem('projectScopeId'); } catch (e) {}
+        }
+
+        function esc(value) {
+            return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        function cleanError_(err) {
+            var msg = (err && err.message) || String(err);
+            return msg.replace(/^Error:\s*/, '');
+        }
+
+        function findQuestion_(id) {
+            var list = (state.data && state.data.nextQuestions) || [];
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].id === id) return list[i];
+            }
+            return null;
+        }
 
         function init() {
             renderLoading();
+            loadState_(state.projectId);
+        }
+
+        function loadState_(projectId) {
             google.script.run
                 .withSuccessHandler(onStateLoaded)
-                .withFailureHandler(onError)
-                .getProjectState(state.projectId);
+                .withFailureHandler(onLoadError)
+                .getProjectState(projectId || null);
+        }
+
+        function onLoadError(err) {
+            var msg = cleanError_(err);
+            if (msg.indexOf('Project not found') !== -1) {
+                // The stored project no longer exists (for example, the sheet was reset). Start over.
+                state.projectId = null;
+                clearStoredId_();
+                loadState_(null);
+                return;
+            }
+            showFatal_(msg);
         }
 
         function onStateLoaded(serverState) {
-            console.log("State loaded:", serverState);
             state.data = serverState;
-            
-            // Save project ID
-            if (!state.projectId) {
+            state.busy = false;
+            if (state.projectId !== serverState.project.id) {
                 state.projectId = serverState.project.id;
-                localStorage.setItem('projectScopeId', state.projectId);
+                storeId_(state.projectId);
             }
-            
             render();
         }
 
-        function onError(err) {
-            console.error(err);
-            document.getElementById('app').innerHTML = `<div class="card" style="color: red;">Error: ${err.message}</div>`;
+        function onAppClick_(e) {
+            var btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            var action = btn.getAttribute('data-action');
+            var qid = btn.getAttribute('data-q');
+            if (action === 'submit') submitAnswer(qid, false);
+            else if (action === 'notsure') submitAnswer(qid, true);
+            else if (action === 'restart') restart_();
         }
 
-        function submitAnswer(questionId) {
-            // Get value based on input type
-            const formContainer = document.getElementById(`q-${questionId}`);
-            if(!formContainer) return;
+        function restart_() {
+            state.projectId = null;
+            state.data = null;
+            clearStoredId_();
+            renderLoading();
+            loadState_(null);
+        }
 
-            let value = null;
-            const inputs = formContainer.querySelectorAll('input, select, textarea');
-            
-            if (inputs.length === 1) {
-                const input = inputs[0];
-                if (input.type === 'radio' || input.type === 'checkbox') {
-                    const checked = formContainer.querySelector('input:checked');
-                    if (checked) value = checked.value;
-                } else {
-                    value = input.value;
-                }
-            } else if (inputs.length > 1 && inputs[0].type === 'radio') {
-                const checked = formContainer.querySelector('input[type="radio"]:checked');
-                if (checked) value = checked.value;
+        function submitAnswer(questionId, notSure) {
+            if (state.busy) return;
+            var q = findQuestion_(questionId);
+            var card = document.getElementById('q-' + questionId);
+            if (!q || !card) return;
+
+            var value = notSure ? state.data.notSure : readValue_(q, card);
+            if (value === null) {
+                showCardError_(card, 'Please choose or write an answer, or use "Not sure yet".');
+                return;
             }
 
-            if (!value) return; // simple validation
-
-            // Disable UI while submitting
-            const btn = formContainer.querySelector('button');
-            btn.disabled = true;
-            btn.innerText = 'Saving...';
+            state.busy = true;
+            card.classList.add('busy');
+            hideCardError_(card);
 
             google.script.run
                 .withSuccessHandler(onStateLoaded)
-                .withFailureHandler(onError)
+                .withFailureHandler(function (err) {
+                    state.busy = false;
+                    card.classList.remove('busy');
+                    showCardError_(card, cleanError_(err) || 'Could not save your answer. Please try again.');
+                })
                 .submitAnswer(state.projectId, questionId, value);
+        }
+
+        /** Reads the answer from a question card. Returns null when nothing usable was entered. */
+        function readValue_(q, card) {
+            var otherInput = card.querySelector('.other-text');
+            var otherText = otherInput ? otherInput.value.trim() : '';
+
+            if (q.type === 'single' || q.type === 'yesno') {
+                var checked = card.querySelector('input[type="radio"]:checked');
+                if (!checked) return null;
+                if (checked.classList.contains('other-option')) return otherText || null;
+                return checked.value;
+            }
+
+            if (q.type === 'multi') {
+                var values = [];
+                card.querySelectorAll('input[type="checkbox"]:checked').forEach(function (box) {
+                    if (!box.classList.contains('other-option')) values.push(box.value);
+                });
+                var otherBox = card.querySelector('input[type="checkbox"].other-option');
+                if (otherBox && otherBox.checked) {
+                    if (!otherText) return null;
+                    values.push(otherText);
+                }
+                return values.length ? values : null;
+            }
+
+            var textEl = card.querySelector('.answer-text');
+            var text = textEl ? textEl.value.trim() : '';
+            return text || null;
+        }
+
+        function showCardError_(card, message) {
+            var el = card.querySelector('.card-error');
+            if (!el) return;
+            el.textContent = message;
+            el.classList.add('show');
+        }
+
+        function hideCardError_(card) {
+            var el = card.querySelector('.card-error');
+            if (el) el.classList.remove('show');
+        }
+
+        function showFatal_(message) {
+            document.getElementById('app').innerHTML =
+                '<div class="card fatal">Something went wrong: ' + esc(message) + '. ' +
+                '<div style="margin-top:1rem"><button type="button" data-action="restart">Start over</button></div></div>';
         }
 
         function renderLoading() {
@@ -201,96 +300,108 @@
         }
 
         function render() {
-            const app = document.getElementById('app');
-            const template = document.getElementById('app-template');
+            var app = document.getElementById('app');
+            var template = document.getElementById('app-template');
             app.innerHTML = '';
             app.appendChild(template.content.cloneNode(true));
-            
             renderQuestions();
             renderAnalysis();
         }
 
         function renderQuestions() {
-            const container = document.getElementById('questions-container');
-            if (!state.data.nextQuestions || state.data.nextQuestions.length === 0) {
-                container.innerHTML = '<div class="card"><h3>Discovery Complete!</h3><p>We have gathered enough information to propose an architecture.</p><button onclick="localStorage.removeItem(\'projectScopeId\'); location.reload();">Start New Project</button></div>';
+            var container = document.getElementById('questions-container');
+            var next = state.data.nextQuestions || [];
+
+            if (next.length === 0) {
+                container.innerHTML =
+                    '<div class="card"><h3>Discovery Complete!</h3>' +
+                    '<p>We have gathered enough information to propose an architecture.</p>' +
+                    '<div style="margin-top:1rem"><button type="button" data-action="restart">Start New Project</button></div></div>';
                 return;
             }
 
-            state.data.nextQuestions.forEach(q => {
-                const qHtml = `
-                    <div class="question-card" id="q-${q.id}">
-                        <div class="q-title">${q.text}</div>
-                        ${q.description ? `<div class="q-desc">${q.description}</div>` : ''}
-                        <div class="options" style="margin-bottom: 1rem;">
-                            ${renderInputForQuestion(q)}
-                        </div>
-                        <button onclick="submitAnswer('${q.id}')">Continue</button>
-                    </div>
-                `;
-                container.insertAdjacentHTML('beforeend', qHtml);
-            });
+            container.innerHTML = next.map(questionCardHtml_).join('');
         }
 
-        function renderInputForQuestion(q) {
-            if (q.type === 'single') {
-                return q.options.map(opt => `
-                    <label class="option-label">
-                        <input type="radio" name="${q.id}" value="${opt.value}">
-                        <span>${opt.label}</span>
-                    </label>
-                `).join('');
-            } else if (q.type === 'text') {
-                return `<input type="text" name="${q.id}" placeholder="Enter your answer...">`;
-            } else if (q.type === 'longtext') {
-                return `<textarea name="${q.id}" rows="3" placeholder="Enter your answer..."></textarea>`;
-            } else if (q.type === 'number') {
-                return `<input type="number" name="${q.id}" placeholder="Enter number...">`;
+        function questionCardHtml_(q) {
+            var id = esc(q.id);
+            var controls = '';
+
+            if (q.type === 'single' || q.type === 'yesno' || q.type === 'multi') {
+                var inputType = q.type === 'multi' ? 'checkbox' : 'radio';
+                controls = q.options.map(function (o) {
+                    return optionHtml_(inputType, q.id, o.value, o.label, false);
+                }).join('');
+                if (q.allowOther) {
+                    controls += optionHtml_(inputType, q.id, '__other__', 'Other (please specify)', true);
+                    controls += '<input type="text" class="other-text" placeholder="Type your answer">';
+                }
+            } else if (q.type === 'long') {
+                controls = '<textarea class="answer-text" rows="4" placeholder="' + esc(q.placeholder) + '"></textarea>';
+            } else {
+                controls = '<input type="text" class="answer-text" placeholder="' + esc(q.placeholder) + '">';
             }
-            return '<div>Unsupported question type</div>';
+
+            return '' +
+                '<div class="question-card" id="q-' + id + '">' +
+                    '<div class="q-title">' + esc(q.text) + '</div>' +
+                    (q.helpText ? '<div class="q-desc">' + esc(q.helpText) + '</div>' : '') +
+                    (q.description ? '<div class="q-desc">' + esc(q.description) + '</div>' : '') +
+                    '<div class="options">' + controls + '</div>' +
+                    '<div class="actions">' +
+                        '<button type="button" data-action="submit" data-q="' + id + '">Continue</button>' +
+                        (q.allowNotSure
+                            ? '<button type="button" class="btn-secondary" data-action="notsure" data-q="' + id + '">Not sure yet</button>'
+                            : '') +
+                    '</div>' +
+                    '<div class="card-error" role="alert"></div>' +
+                '</div>';
+        }
+
+        function optionHtml_(inputType, questionId, value, label, isOther) {
+            return '<label class="option-label">' +
+                '<input type="' + inputType + '" name="ans-' + esc(questionId) + '" value="' + esc(value) + '"' +
+                (isOther ? ' class="other-option"' : '') + '>' +
+                '<span>' + esc(label) + '</span>' +
+            '</label>';
         }
 
         function renderAnalysis() {
-            const container = document.getElementById('analysis-content');
-            const { architecture, requirements, facts, answers } = state.data;
-            
-            let html = `
-                <div class="stat-row">
-                    <span>Questions Answered</span>
-                    <span class="stat-val">${answers ? answers.length : 0}</span>
-                </div>
-                <div class="stat-row">
-                    <span>Facts Extracted</span>
-                    <span class="stat-val">${facts ? Object.keys(facts).length : 0}</span>
-                </div>
-                <div class="stat-row">
-                    <span>Requirements Drafted</span>
-                    <span class="stat-val">${requirements ? requirements.length : 0}</span>
-                </div>
-            `;
-            
-            if (architecture && architecture.patterns && architecture.patterns.length > 0) {
-                html += `
-                    <h3 style="margin-top: 1.5rem; font-size: 1rem;">Top Architecture Pattern</h3>
-                    <div class="tag" style="background: var(--success-color); color: white; border:none; margin:0;">
-                        ${architecture.patterns[0].pattern}
-                    </div>
-                `;
+            var container = document.getElementById('analysis-content');
+            var data = state.data;
+            var answers = data.answers || [];
+            var facts = data.facts || {};
+            var requirements = data.requirements || [];
+            var arch = data.architecture || {};
+
+            var html =
+                '<div class="stat-row"><span>Questions Answered</span><span class="stat-val">' + answers.length + '</span></div>' +
+                '<div class="stat-row"><span>Facts Extracted</span><span class="stat-val">' + Object.keys(facts).length + '</span></div>' +
+                '<div class="stat-row"><span>Requirements Drafted</span><span class="stat-val">' + requirements.length + '</span></div>';
+
+            if (arch.patterns && arch.patterns.length > 0) {
+                html +=
+                    '<h3 style="margin-top: 1.5rem; font-size: 1rem;">Top Architecture Pattern</h3>' +
+                    '<div class="tag" style="background: var(--success-color); color: white; border: none; margin: 0;">' +
+                        esc(arch.patterns[0].pattern) +
+                    '</div>';
             }
-            
-            if (architecture && architecture.recommendedTechStack) {
-                html += `<h3 style="margin-top: 1.5rem; font-size: 1rem;">Predicted Stack</h3>`;
-                const stack = architecture.recommendedTechStack;
-                if(stack.frontend.length) html += `<div style="font-size: 0.85rem; margin-top: 0.5rem;"><b>Frontend:</b> ${stack.frontend[0].name}</div>`;
-                if(stack.backend.length) html += `<div style="font-size: 0.85rem; margin-top: 0.5rem;"><b>Backend:</b> ${stack.backend[0].name}</div>`;
-                if(stack.database.length) html += `<div style="font-size: 0.85rem; margin-top: 0.5rem;"><b>Database:</b> ${stack.database[0].name}</div>`;
+
+            var stack = arch.recommendedTechStack;
+            if (stack) {
+                html += '<h3 style="margin-top: 1.5rem; font-size: 1rem;">Predicted Stack</h3>';
+                if (stack.frontend.length) html += '<div class="stack-row"><b>Frontend:</b> ' + esc(stack.frontend[0].name) + '</div>';
+                if (stack.backend.length) html += '<div class="stack-row"><b>Backend:</b> ' + esc(stack.backend[0].name) + '</div>';
+                if (stack.database.length) html += '<div class="stack-row"><b>Database:</b> ' + esc(stack.database[0].name) + '</div>';
             }
 
             container.innerHTML = html;
         }
 
-        // Start
-        window.addEventListener('load', init);
+        window.addEventListener('load', function () {
+            document.getElementById('app').addEventListener('click', onAppClick_);
+            init();
+        });
     </script>
   </body>
 </html>
